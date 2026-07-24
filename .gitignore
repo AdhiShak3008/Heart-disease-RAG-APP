@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+*.py[cod]
+
+backend/data/raw/
+backend/data/processed/spectrograms/
+
+challenge-2022.zip
+challenge-2022-1.0.0.zip
+curl_response
+
+frontend/node_modules/

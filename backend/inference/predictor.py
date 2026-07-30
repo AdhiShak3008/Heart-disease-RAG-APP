@@ -53,9 +53,16 @@ class RosaNetPredictor:
             "Unknown",
         ]
 
+        probs = probabilities.squeeze(0).cpu().tolist()
+
         return {
             "prediction": labels[prediction.item()],
             "confidence": confidence.item(),
+            "probabilities": {
+                "Absent": round(probs[0], 4),
+                "Present": round(probs[1], 4),
+                "Unknown": round(probs[2], 4),
+            },
         }
 
 

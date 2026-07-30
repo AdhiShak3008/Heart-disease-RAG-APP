@@ -62,14 +62,7 @@ async def predict(
 
         result = predictor.predict(recordings)
 
-        return {
-            "prediction": result["prediction"],
-            "confidence": round(
-                result["confidence"],
-                4,
-            ),
-        }
-
+        return result
     except Exception as e:
 
         raise HTTPException(

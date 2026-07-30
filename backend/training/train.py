@@ -1,16 +1,18 @@
 from pathlib import Path
 
+import pandas as pd
 import torch
 import torch.nn as nn
+from sklearn.metrics import classification_report, f1_score
 from torch.utils.data import DataLoader
-import pandas as pd
+
 from backend.training.rosanet import RosaNet
 from backend.training.torch_dataset import HeartSoundTorchDataset
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 BATCH_SIZE = 8
-EPOCHS = 10
+EPOCHS = 40
 LEARNING_RATE = 1e-3
 
 
@@ -22,6 +24,9 @@ def validate(model, loader, criterion):
     total_loss = 0.0
     correct = 0
     total = 0
+
+    all_labels = []
+    all_predictions = []
 
     for batch in loader:
 
@@ -37,13 +42,34 @@ def validate(model, loader, criterion):
         predictions = outputs.argmax(dim=1)
 
         correct += (predictions == labels).sum().item()
-
         total += labels.size(0)
+
+        all_predictions.extend(predictions.cpu().numpy())
+        all_labels.extend(labels.cpu().numpy())
 
     average_loss = total_loss / len(loader)
     accuracy = 100.0 * correct / total
 
-    return average_loss, accuracy
+    macro_f1 = f1_score(
+        all_labels,
+        all_predictions,
+        average="macro",
+        zero_division=0,
+    )
+
+    report = classification_report(
+        all_labels,
+        all_predictions,
+        target_names=[
+            "Absent",
+            "Present",
+            "Unknown",
+        ],
+        digits=4,
+        zero_division=0,
+    )
+
+    return average_loss, accuracy, macro_f1, report
 
 
 def compute_class_weights(train_csv):
@@ -61,7 +87,6 @@ def compute_class_weights(train_csv):
     counts = [0, 0, 0]
 
     for label in patient_labels:
-
         counts[label_map[label]] += 1
 
     total = sum(counts)
@@ -70,14 +95,12 @@ def compute_class_weights(train_csv):
 
     print("\nClass Distribution")
     print("------------------")
-
     print(f"Absent  : {counts[0]}")
     print(f"Present : {counts[1]}")
     print(f"Unknown : {counts[2]}")
 
     print("\nClass Weights")
     print("-------------")
-
     print(weights)
 
     return torch.tensor(
@@ -119,12 +142,18 @@ def train():
         model.parameters(),
         lr=LEARNING_RATE,
     )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="max",
+        factor=0.5,
+        patience=5,
+    )
 
     save_dir = Path(__file__).resolve().parent.parent.parent / "saved_models"
 
     save_dir.mkdir(exist_ok=True)
 
-    best_val_acc = 0.0
+    best_macro_f1 = 0.0
 
     print("=" * 60)
     print(f"Training on: {DEVICE}")
@@ -155,20 +184,30 @@ def train():
 
         train_loss = running_loss / len(train_loader)
 
-        val_loss, val_acc = validate(
+        (
+            val_loss,
+            val_acc,
+            macro_f1,
+            report,
+        ) = validate(
             model,
             val_loader,
             criterion,
         )
-
+        scheduler.step(macro_f1)
         print(f"\nEpoch {epoch + 1}/{EPOCHS}")
         print(f"Train Loss      : {train_loss:.4f}")
         print(f"Validation Loss : {val_loss:.4f}")
         print(f"Validation Acc  : {val_acc:.2f}%")
+        print(f"Macro F1        : {macro_f1:.4f}")
+        print(f"Learning Rate   : {optimizer.param_groups[0]['lr']:.6f}")
+        print("\nClassification Report")
+        print("---------------------")
+        print(report)
 
-        if val_acc > best_val_acc:
+        if macro_f1 > best_macro_f1:
 
-            best_val_acc = val_acc
+            best_macro_f1 = macro_f1
 
             torch.save(
                 model.state_dict(),
@@ -179,7 +218,7 @@ def train():
 
     print("\n" + "=" * 60)
     print("Training Complete")
-    print(f"Best Validation Accuracy : {best_val_acc:.2f}%")
+    print(f"Best Macro F1 : {best_macro_f1:.4f}")
     print(f"Model saved to : {save_dir / 'rosanet.pt'}")
     print("=" * 60)
 

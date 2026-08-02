@@ -26,10 +26,24 @@ class Retriever:
         """
         Retrieve the most relevant chunks.
 
+        Parameters
+        ----------
+        query : str
+            User question.
+
+        top_k : int
+            Number of chunks to retrieve.
+
         Returns
         -------
-        List of payload dictionaries.
+        list[dict]
+            Retrieved chunks with metadata and similarity scores.
         """
+
+        query = query.strip()
+
+        if not query:
+            return []
 
         query_vector = self.embedder.embed_query(query)
 
@@ -42,9 +56,9 @@ class Retriever:
 
         for hit in results:
 
-            payload = hit.payload.copy()
+            payload = dict(hit.payload)
 
-            payload["score"] = hit.score
+            payload["score"] = round(hit.score, 4)
 
             retrieved.append(payload)
 

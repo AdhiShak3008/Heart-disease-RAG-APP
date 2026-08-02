@@ -1,13 +1,23 @@
+"""RosaNet inference."""
+
 from pathlib import Path
 
 import torch
 
+from backend.rag.clinical_context import ClinicalContext
 from backend.training.rosanet import RosaNet
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+LABELS = (
+    "Absent",
+    "Present",
+    "Unknown",
+)
+
 
 class RosaNetPredictor:
+    """Load a trained RosaNet model and perform inference."""
 
     def __init__(self):
 
@@ -19,19 +29,36 @@ class RosaNetPredictor:
             / "rosanet.pt"
         )
 
+        checkpoint = torch.load(
+            model_path,
+            map_location=DEVICE,
+        )
+
         self.model.load_state_dict(
-            torch.load(
-                model_path,
-                map_location=DEVICE,
-            )
+            checkpoint["model_state_dict"]
         )
 
         self.model.eval()
 
-        print("Model loaded successfully.")
+        print(f"Loaded RosaNet on {DEVICE}.")
 
     @torch.no_grad()
-    def predict(self, recordings):
+    def predict(
+        self,
+        recordings: torch.Tensor,
+    ) -> ClinicalContext:
+        """
+        Predict murmur class from preprocessed recordings.
+
+        Parameters
+        ----------
+        recordings : torch.Tensor
+            Shape: (batch, 4, 128, 256)
+
+        Returns
+        -------
+        ClinicalContext
+        """
 
         recordings = recordings.to(DEVICE)
 
@@ -47,23 +74,17 @@ class RosaNetPredictor:
             dim=1,
         )
 
-        labels = [
-            "Absent",
-            "Present",
-            "Unknown",
-        ]
-
         probs = probabilities.squeeze(0).cpu().tolist()
 
-        return {
-            "prediction": labels[prediction.item()],
-            "confidence": confidence.item(),
-            "probabilities": {
-                "Absent": round(probs[0], 4),
-                "Present": round(probs[1], 4),
-                "Unknown": round(probs[2], 4),
+        return ClinicalContext(
+            prediction=LABELS[prediction.item()],
+            confidence=confidence.item(),
+            probabilities={
+                "Absent": probs[0],
+                "Present": probs[1],
+                "Unknown": probs[2],
             },
-        }
+        )
 
 
 if __name__ == "__main__":

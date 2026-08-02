@@ -8,9 +8,10 @@ from backend.preprocessing.preprocess_dataset import preprocess_audio
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 
 
-def load_patient(patient_id):
+def load_patient(patient_id: str) -> torch.Tensor:
+    """Load all four valve recordings for a patient."""
 
-    valves = ["AV", "MV", "PV", "TV"]
+    valves = ("AV", "MV", "PV", "TV")
 
     spectrograms = []
 
@@ -29,9 +30,7 @@ def load_patient(patient_id):
 
     recordings = torch.stack(spectrograms)
 
-    recordings = recordings.unsqueeze(0)
-
-    return recordings
+    return recordings.unsqueeze(0)
 
 
 def main():
@@ -42,17 +41,22 @@ def main():
 
     recordings = load_patient(patient_id)
 
-    print("Input Shape:", recordings.shape)
+    print(f"Input Shape : {tuple(recordings.shape)}")
 
-    result = predictor.predict(recordings)
+    clinical_context = predictor.predict(recordings)
 
     print()
-
-    print("=" * 50)
+    print("=" * 60)
     print(f"Patient ID : {patient_id}")
-    print(f"Prediction : {result['prediction']}")
-    print(f"Confidence : {result['confidence']:.4f}")
-    print("=" * 50)
+    print(f"Prediction : {clinical_context.prediction}")
+    print(f"Confidence : {clinical_context.confidence:.2%}")
+
+    print("\nClass Probabilities")
+
+    for label, probability in clinical_context.probabilities.items():
+        print(f"  {label:<8}: {probability:.2%}")
+
+    print("=" * 60)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,17 @@ import {
 import "./Dashboard.css";
 
 /* -------------------------------------------------------------------------- */
+/* API config                                                                  */
+/* -------------------------------------------------------------------------- */
+
+// Adjust to match wherever the FastAPI backend is served from.
+// Leave as an empty string if the frontend is served from the same origin
+// (e.g. behind a reverse proxy) so requests hit "/analyze" directly.
+const API_BASE_URL = "http://localhost:8000";
+
+const DEFAULT_QUESTION = "What does this result mean for the patient?";
+
+/* -------------------------------------------------------------------------- */
 /* Static / placeholder data                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -27,14 +38,6 @@ const VALVE_CONFIG = [
   { key: "mv", label: "Mitral Valve", short: "MV" },
   { key: "pv", label: "Pulmonary Valve", short: "PV" },
   { key: "tv", label: "Tricuspid Valve", short: "TV" },
-];
-
-const SOURCES = [
-  "American Heart Association",
-  "Mayo Clinic",
-  "NIH",
-  "Cleveland Clinic",
-  "WHO",
 ];
 
 const INITIAL_MESSAGES = [
@@ -194,7 +197,7 @@ function UploadCard({ valve, file, onFileChange, onRemove }) {
   );
 }
 
-function UploadSection({ files, setFiles, onAnalyze, isAnalyzing }) {
+function UploadSection({ files, setFiles, onAnalyze, isAnalyzing, errorMsg }) {
   const handleFileChange = (key, file) => {
     setFiles((prev) => ({ ...prev, [key]: file }));
   };
@@ -204,6 +207,7 @@ function UploadSection({ files, setFiles, onAnalyze, isAnalyzing }) {
   };
 
   const uploadedCount = Object.values(files).filter(Boolean).length;
+  const allUploaded = uploadedCount === VALVE_CONFIG.length;
 
   return (
     <section className="panel upload-panel">
@@ -233,11 +237,20 @@ function UploadSection({ files, setFiles, onAnalyze, isAnalyzing }) {
         type="button"
         className="primary-btn analyze-btn"
         onClick={onAnalyze}
-        disabled={isAnalyzing}
+        disabled={isAnalyzing || !allUploaded}
       >
         <Activity size={18} strokeWidth={2.2} />
         {isAnalyzing ? "Analyzing heart sounds..." : "Analyze Heart Sounds"}
       </button>
+
+      {errorMsg && (
+        <p
+          className="format-hint"
+          style={{ color: "var(--danger)", marginTop: "10px", fontSize: "12px" }}
+        >
+          {errorMsg}
+        </p>
+      )}
     </section>
   );
 }
@@ -303,7 +316,12 @@ function PredictionSection({ result }) {
 /* RAG Evidence Section                                                       */
 /* -------------------------------------------------------------------------- */
 
+const DEFAULT_RAG_TEXT =
+  "Heart murmurs are extra or unusual sounds heard during a heartbeat, caused by turbulent blood flow through the heart valves or nearby blood vessels. They can be innocent and harmless, or can signal an underlying structural issue such as valve stenosis or regurgitation. Diagnosis typically combines auscultation findings with imaging, most commonly an echocardiogram, to confirm the source and severity.";
+
 function RagSection({ result }) {
+  const sources = result?.sources ?? [];
+
   return (
     <section className="panel rag-panel">
       <div className="panel-head">
@@ -318,22 +336,24 @@ function RagSection({ result }) {
         </div>
       </div>
 
-      <p className="rag-text">
-        {result
-          ? result.ragExplanation
-          : "Heart murmurs are extra or unusual sounds heard during a heartbeat, caused by turbulent blood flow through the heart valves or nearby blood vessels. They can be innocent and harmless, or can signal an underlying structural issue such as valve stenosis or regurgitation. Diagnosis typically combines auscultation findings with imaging, most commonly an echocardiogram, to confirm the source and severity."}
-      </p>
+      <p className="rag-text">{result ? result.ragExplanation : DEFAULT_RAG_TEXT}</p>
 
-      <div className="sources-block">
-        <span className="sources-label">Sources</span>
-        <div className="chip-row">
-          {SOURCES.map((source) => (
-            <span key={source} className="source-chip">
-              {source}
-            </span>
-          ))}
+      {sources.length > 0 && (
+        <div className="sources-block">
+          <span className="sources-label">Sources</span>
+          <div className="chip-row">
+            {sources.map((src, idx) => (
+              <span
+                key={`${src.title ?? src.source ?? "source"}-${idx}`}
+                className="source-chip"
+                title={src.section ? `${src.source} \u2014 ${src.section}` : src.source}
+              >
+                {src.title || src.source}
+              </span>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </section>
   );
 }
@@ -342,24 +362,56 @@ function RagSection({ result }) {
 /* Chat Section                                                               */
 /* -------------------------------------------------------------------------- */
 
-function ChatSection() {
+function ChatSection({ hasAnalysis }) {
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
   const [draft, setDraft] = useState("");
+  const [isSending, setIsSending] = useState(false);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const trimmed = draft.trim();
-    if (!trimmed) return;
+    if (!trimmed || isSending || !hasAnalysis) return;
 
     const userMsg = { id: Date.now(), role: "user", text: trimmed };
-    const assistantMsg = {
-      id: Date.now() + 1,
+    const thinkingId = Date.now() + 1;
+    const thinkingMsg = {
+      id: thinkingId,
       role: "assistant",
-      text:
-        "This is a placeholder response. In the full product, RosaNet would answer using the retrieved clinical context above.",
+      text: "RosaNet is thinking...",
     };
 
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    setMessages((prev) => [...prev, userMsg, thinkingMsg]);
     setDraft("");
+    setIsSending(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: trimmed }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}.`);
+      }
+
+      const data = await response.json();
+
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === thinkingId ? { ...msg, text: data.answer } : msg
+        )
+      );
+    } catch (err) {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === thinkingId
+            ? { ...msg, text: "Sorry, I couldn't reach the RosaNet backend." }
+            : msg
+        )
+      );
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const handleKeyDown = (e) => {
@@ -408,12 +460,21 @@ function ChatSection() {
         <input
           type="text"
           className="chat-input"
-          placeholder="Ask about your result..."
+          placeholder={
+            hasAnalysis ? "Ask about your result..." : "Analyze recordings first..."
+          }
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={handleKeyDown}
+          disabled={isSending || !hasAnalysis}
         />
-        <button type="button" className="send-btn" onClick={handleSend} aria-label="Send message">
+        <button
+          type="button"
+          className="send-btn"
+          onClick={handleSend}
+          aria-label="Send message"
+          disabled={isSending || !hasAnalysis}
+        >
           <Send size={16} />
         </button>
       </div>
@@ -463,23 +524,72 @@ export default function Dashboard() {
   const [files, setFiles] = useState({ av: null, mv: null, pv: null, tv: null });
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
 
-  const handleAnalyze = () => {
+  const handleAnalyze = async () => {
+    const { av, mv, pv, tv } = files;
+
+    if (!av || !mv || !pv || !tv) {
+      setErrorMsg("Please upload a recording for all four valves before analyzing.");
+      return;
+    }
+
     setIsAnalyzing(true);
+    setErrorMsg(null);
     setResult(null);
 
-    // Placeholder timing to simulate an inference call; no backend involved.
-    window.setTimeout(() => {
-      setResult({
-        label: "Present",
-        confidence: 87.6,
-        explanation:
-          "A heart murmur was detected across the uploaded recordings, most prominent in the aortic and mitral channels.",
-        ragExplanation:
-          "A \u2018Present\u2019 result indicates the model detected turbulent flow patterns consistent with a heart murmur. Murmurs of this profile are commonly associated with mitral regurgitation or aortic valve narrowing, though many are benign. Clinical guidelines recommend confirming any detected murmur with an echocardiogram before drawing conclusions about severity or cause.",
+    const formData = new FormData();
+    formData.append("av", av);
+    formData.append("mv", mv);
+    formData.append("pv", pv);
+    formData.append("tv", tv);
+    formData.append("question", DEFAULT_QUESTION);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/analyze`, {
+        method: "POST",
+        body: formData,
       });
+
+      if (!response.ok) {
+        let detail = `Request failed with status ${response.status}.`;
+        try {
+          const errBody = await response.json();
+          if (errBody?.detail) detail = errBody.detail;
+        } catch {
+          // response body wasn't JSON; fall back to the generic message
+        }
+        throw new Error(detail);
+      }
+
+      const data = await response.json();
+
+      const confidencePct = Math.round((data.confidence ?? 0) * 1000) / 10;
+
+      const probabilitySummary = data.probabilities
+        ? Object.entries(data.probabilities)
+            .map(([k, v]) => `${k} ${Math.round(v * 100)}%`)
+            .join(" \u00b7 ")
+        : "";
+
+      setResult({
+        label: data.prediction,
+        confidence: confidencePct,
+        explanation: probabilitySummary
+          ? `Model probabilities \u2014 ${probabilitySummary}.`
+          : "",
+        ragExplanation: data.answer,
+        sources: data.sources ?? [],
+      });
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while analyzing the recordings. Please try again."
+      );
+    } finally {
       setIsAnalyzing(false);
-    }, 1400);
+    }
   };
 
   return (
@@ -495,10 +605,11 @@ export default function Dashboard() {
             setFiles={setFiles}
             onAnalyze={handleAnalyze}
             isAnalyzing={isAnalyzing}
+            errorMsg={errorMsg}
           />
           <PredictionSection result={result} />
           <RagSection result={result} />
-          <ChatSection />
+          <ChatSection hasAnalysis={result !== null} />
         </div>
 
         <Disclaimer />

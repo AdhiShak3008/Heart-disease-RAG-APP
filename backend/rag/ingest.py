@@ -4,6 +4,7 @@ from backend.rag.chunker import chunk_text
 from backend.rag.config import DOCUMENT_DIR
 from backend.rag.embeddings import EmbeddingModel
 from backend.rag.pdf_loader import load_pdf
+from backend.rag.section_extractor import extract_sections
 from backend.rag.vector_store import VectorStore
 
 
@@ -33,6 +34,10 @@ def ingest_documents() -> None:
 
     current_id = 0
 
+    # ==========================================================
+    # Process every PDF
+    # ==========================================================
+
     for pdf in pdf_files:
 
         print(f"Ingesting: {pdf.relative_to(DOCUMENT_DIR)}")
@@ -43,32 +48,54 @@ def ingest_documents() -> None:
             print("   No text extracted. Skipping.\n")
             continue
 
-        chunks = chunk_text(text)
+        sections = extract_sections(text)
 
-        if not chunks:
-            print("   No chunks generated. Skipping.\n")
-            continue
+        total_chunks = 0
 
-        vectors = embedder.embed_documents(chunks)
+        # ------------------------------------------------------
+        # Process every section
+        # ------------------------------------------------------
 
-        for chunk, vector in zip(chunks, vectors):
+        for section in sections:
 
-            ids.append(current_id)
+            section_name = section["title"]
+            section_text = section["content"]
 
-            embeddings.append(vector)
+            chunks = chunk_text(section_text)
 
-            payloads.append(
-                {
-                    "text": chunk,
-                    "title": pdf.stem,
-                    "source": pdf.parent.name,
-                    "path": str(pdf),
-                }
-            )
+            if not chunks:
+                continue
 
-            current_id += 1
+            vectors = embedder.embed_documents(chunks)
 
-        print(f"   {len(chunks)} chunks")
+            for chunk, vector in zip(chunks, vectors):
+
+                ids.append(current_id)
+
+                embeddings.append(vector)
+
+                payloads.append(
+                    {
+                        "text": chunk,
+                        "title": pdf.stem,
+                        "section": section_name,
+                        "source": pdf.parent.name,
+                        "path": str(pdf),
+                    }
+                )
+
+                current_id += 1
+
+            total_chunks += len(chunks)
+
+        print(f"   {total_chunks} chunks")
+
+    # ==========================================================
+
+    if not ids:
+        print("\nNo chunks generated.")
+        store.client.close()
+        return
 
     print("\nUploading vectors to Qdrant...")
 
@@ -80,7 +107,6 @@ def ingest_documents() -> None:
 
     print(f"\nSuccessfully stored {len(ids)} chunks.")
 
-    # Close Qdrant client (avoids Windows shutdown warning)
     store.client.close()
 
 

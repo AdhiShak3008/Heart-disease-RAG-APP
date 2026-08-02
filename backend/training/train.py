@@ -142,6 +142,7 @@ def train():
         model.parameters(),
         lr=LEARNING_RATE,
     )
+
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
         mode="max",
@@ -150,10 +151,10 @@ def train():
     )
 
     save_dir = Path(__file__).resolve().parent.parent.parent / "saved_models"
-
     save_dir.mkdir(exist_ok=True)
 
     best_macro_f1 = 0.0
+    previous_lr = optimizer.param_groups[0]["lr"]
 
     print("=" * 60)
     print(f"Training on: {DEVICE}")
@@ -194,13 +195,23 @@ def train():
             val_loader,
             criterion,
         )
+
         scheduler.step(macro_f1)
+
+        current_lr = optimizer.param_groups[0]["lr"]
+
         print(f"\nEpoch {epoch + 1}/{EPOCHS}")
         print(f"Train Loss      : {train_loss:.4f}")
         print(f"Validation Loss : {val_loss:.4f}")
         print(f"Validation Acc  : {val_acc:.2f}%")
         print(f"Macro F1        : {macro_f1:.4f}")
-        print(f"Learning Rate   : {optimizer.param_groups[0]['lr']:.6f}")
+        print(f"Learning Rate   : {current_lr:.6f}")
+
+        if current_lr != previous_lr:
+            print(f"✅ Learning rate reduced to {current_lr:.6f}")
+
+        previous_lr = current_lr
+
         print("\nClassification Report")
         print("---------------------")
         print(report)
@@ -210,16 +221,22 @@ def train():
             best_macro_f1 = macro_f1
 
             torch.save(
-                model.state_dict(),
+                {
+                    "epoch": epoch + 1,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict(),
+                    "best_macro_f1": best_macro_f1,
+                },
                 save_dir / "rosanet.pt",
             )
 
-            print("✅ Best model saved.")
+            print("✅ Best model checkpoint saved.")
 
     print("\n" + "=" * 60)
     print("Training Complete")
     print(f"Best Macro F1 : {best_macro_f1:.4f}")
-    print(f"Model saved to : {save_dir / 'rosanet.pt'}")
+    print(f"Checkpoint saved to : {save_dir / 'rosanet.pt'}")
     print("=" * 60)
 
 

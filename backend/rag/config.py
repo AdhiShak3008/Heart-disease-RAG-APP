@@ -14,9 +14,9 @@ COLLECTION_NAME = "heart_disease"
 
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
-CHUNK_SIZE = 500
+CHUNK_SIZE = 180
 
-CHUNK_OVERLAP = 50
+CHUNK_OVERLAP = 30
 
 TOP_K = 5
 

@@ -1,15 +1,19 @@
 """Recursive text chunking."""
 
+from __future__ import annotations
+
 import re
 
 from backend.rag.config import CHUNK_SIZE, CHUNK_OVERLAP
 
-SEPARATORS = [
-    "\n\n",  # paragraphs
-    ". ",  # sentences
-    "\n",  # lines
-    " ",  # words
-]
+SEPARATORS = (
+    "\n\n",   # paragraphs
+    ". ",     # sentences
+    "\n",     # lines
+    " ",      # words
+)
+
+MIN_CHUNK_WORDS = 20
 
 
 def chunk_text(
@@ -17,35 +21,57 @@ def chunk_text(
     chunk_size: int = CHUNK_SIZE,
     overlap: int = CHUNK_OVERLAP,
 ) -> list[str]:
+    """
+    Split text recursively while preserving semantic boundaries.
+    """
 
     text = re.sub(r"\s+", " ", text).strip()
 
     if not text:
         return []
 
-    return _recursive_split(text, chunk_size, overlap, SEPARATORS)
+    chunks = _recursive_split(
+        text,
+        chunk_size,
+        overlap,
+        list(SEPARATORS),
+    )
+
+    chunks = _merge_small_chunks(chunks)
+
+    return chunks
 
 
-def _recursive_split(text, chunk_size, overlap, separators):
+def _recursive_split(
+    text: str,
+    chunk_size: int,
+    overlap: int,
+    separators: list[str],
+) -> list[str]:
 
-    if len(text) <= chunk_size:
-        return [text]
+    if len(text.split()) <= chunk_size:
+        return [text.strip()]
 
     if not separators:
-        return _character_split(text, chunk_size, overlap)
+        return _word_split(
+            text,
+            chunk_size,
+            overlap,
+        )
 
     separator = separators[0]
 
     parts = text.split(separator)
 
     chunks = []
+
     current = ""
 
     for part in parts:
 
         candidate = part if not current else current + separator + part
 
-        if len(candidate) <= chunk_size:
+        if len(candidate.split()) <= chunk_size:
             current = candidate
 
         else:
@@ -63,6 +89,7 @@ def _recursive_split(text, chunk_size, overlap, separators):
             current = part
 
     if current:
+
         chunks.extend(
             _recursive_split(
                 current,
@@ -72,27 +99,40 @@ def _recursive_split(text, chunk_size, overlap, separators):
             )
         )
 
-    return _apply_overlap(chunks, overlap)
+    return _apply_overlap(
+        chunks,
+        overlap,
+    )
 
 
-def _character_split(text, chunk_size, overlap):
+def _word_split(
+    text: str,
+    chunk_size: int,
+    overlap: int,
+) -> list[str]:
+
+    words = text.split()
 
     chunks = []
 
-    start = 0
+    step = chunk_size - overlap
 
-    while start < len(text):
+    for start in range(0, len(words), step):
 
         end = start + chunk_size
 
-        chunks.append(text[start:end].strip())
+        chunk = " ".join(words[start:end])
 
-        start += chunk_size - overlap
+        if chunk:
+            chunks.append(chunk)
 
     return chunks
 
 
-def _apply_overlap(chunks, overlap):
+def _apply_overlap(
+    chunks: list[str],
+    overlap: int,
+) -> list[str]:
 
     if overlap <= 0:
         return chunks
@@ -105,8 +145,35 @@ def _apply_overlap(chunks, overlap):
             merged.append(chunk)
             continue
 
-        prefix = chunks[i - 1][-overlap:]
+        previous_words = chunks[i - 1].split()
 
-        merged.append(prefix + chunk)
+        prefix = " ".join(previous_words[-overlap:])
+
+        merged.append(f"{prefix} {chunk}")
+
+    return merged
+
+
+def _merge_small_chunks(
+    chunks: list[str],
+) -> list[str]:
+
+    if not chunks:
+        return chunks
+
+    merged = []
+
+    for chunk in chunks:
+
+        if (
+            merged
+            and len(chunk.split()) < MIN_CHUNK_WORDS
+        ):
+
+            merged[-1] += " " + chunk
+
+        else:
+
+            merged.append(chunk)
 
     return merged
